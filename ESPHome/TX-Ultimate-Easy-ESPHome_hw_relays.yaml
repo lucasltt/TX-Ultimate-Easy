@@ -617,7 +617,6 @@ script:
 
           static const uint32_t LIGHT_TRANSITION_TURN_ON = ${LIGHT_TRANSITION_TURN_ON};
           static const uint32_t LIGHT_TRANSITION_TURN_OFF = ${LIGHT_TRANSITION_TURN_OFF};
-          static const uint8_t LIGHT_BRIGHTNESS_TURN_ON = ${LIGHT_BRIGHTNESS_TURN_ON};
 
           switch (light_group) {
             case 1:
@@ -630,10 +629,17 @@ script:
                 ESP_LOGI("${TAG_HW_RELAYS}",
                           "Turn-on ${LIGHT_MODE_BOTTOM_OR_LEFT_TEXT} light for Relay %" PRIu8, light_index+1);
                 auto call = id(gb_lights_1)[light_index]->turn_on();
+                #if TX_ULTIMATE_EASY_IS_EU_MODEL
+                const uint32_t packed = id(led_bottom_state);
+                #else
+                const uint32_t packed = id(led_left_state);
+                #endif
+                call.set_rgb(((packed >> 24) & 0xFF) / 255.0f,
+                             ((packed >> 16) & 0xFF) / 255.0f,
+                             ((packed >> 8) & 0xFF) / 255.0f);
+                call.set_brightness((packed & 0xFF) / 255.0f);
                 if (LIGHT_TRANSITION_TURN_ON > 0)
                   call.set_transition_length(LIGHT_TRANSITION_TURN_ON);  // in ms
-                if (LIGHT_BRIGHTNESS_TURN_ON > 0 and LIGHT_BRIGHTNESS_TURN_ON <= 100)
-                  call.set_brightness(LIGHT_BRIGHTNESS_TURN_ON / 100.0f);
                 call.perform();
               } else {
                 ESP_LOGI("${TAG_HW_RELAYS}",
@@ -654,10 +660,17 @@ script:
                 ESP_LOGI("${TAG_HW_RELAYS}",
                           "Turn-on ${LIGHT_MODE_TOP_OR_RIGHT_TEXT} light for Relay %" PRIu8, light_index+1);
                 auto call = id(gb_lights_2)[light_index]->turn_on();
+                #if TX_ULTIMATE_EASY_IS_EU_MODEL
+                const uint32_t packed = id(led_top_state);
+                #else
+                const uint32_t packed = id(led_right_state);
+                #endif
+                call.set_rgb(((packed >> 24) & 0xFF) / 255.0f,
+                             ((packed >> 16) & 0xFF) / 255.0f,
+                             ((packed >> 8) & 0xFF) / 255.0f);
+                call.set_brightness((packed & 0xFF) / 255.0f);
                 if (LIGHT_TRANSITION_TURN_ON > 0)
                   call.set_transition_length(LIGHT_TRANSITION_TURN_ON);  // in ms
-                if (LIGHT_BRIGHTNESS_TURN_ON > 0 and LIGHT_BRIGHTNESS_TURN_ON <= 100)
-                  call.set_brightness(LIGHT_BRIGHTNESS_TURN_ON / 100.0f);
                 call.perform();
               } else {
                 ESP_LOGI("${TAG_HW_RELAYS}",

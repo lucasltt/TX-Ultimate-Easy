@@ -179,8 +179,9 @@ switch:
         - lambda: |-
             // No need to clear the snapshot values - they will be overwritten next time night mode is enabled.
             night_mode_apply->stop();  // stop in case we're in the middle of a transition
-            light_night_mode_leds->turn_off();
-            show_relay_status->execute();  // re-evaluate all relay indicators
+            light_night_mode_leds->turn_off().perform();
+            // Repaint relay indicators using their saved color/brightness palettes.
+            show_relay_status->execute();
 
   # ── Settings (entity_category: config → grouped under "Configuration") ────
   - id: sw_night_mode_suppress_vibration

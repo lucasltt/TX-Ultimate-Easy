@@ -28,7 +28,9 @@ substitutions:
   LIGHT_BRIGHTNESS_TURN_ON: 0   # Brightness (1 to 100%, 0 to not set it)
 
   LIGHT_FULL_RESTORE_MODE: RESTORE_DEFAULT_OFF
-  LIGHT_SIDES_RESTORE_MODE: RESTORE_DEFAULT_OFF
+  # Color and brightness are restored by the compact palette globals below.
+  # Relay state remains authoritative for whether its indicator LEDs are on.
+  LIGHT_SIDES_RESTORE_MODE: ALWAYS_OFF
 
   LIGHT_LED_COUNT: ${28 if IS_EU_MODEL else 32}
   LIGHT_MAX_ADDR: ${27 if IS_EU_MODEL else 31}
@@ -39,6 +41,30 @@ esphome:
   platformio_options:
     build_flags:
       - -D TX_ULTIMATE_EASY_HW_LEDS
+
+globals:
+  # Persistent format: 0xRRGGBBAA (AA is master brightness). Keeping one packed
+  # value per group avoids the NVS pressure caused by separate channel globals.
+  - id: led_bottom_state
+    type: uint32_t
+    restore_value: true
+    initial_value: '4294967295'  # White, 100% brightness
+  - id: led_left_state
+    type: uint32_t
+    restore_value: true
+    initial_value: '4294967295'
+  - id: led_right_state
+    type: uint32_t
+    restore_value: true
+    initial_value: '4294967295'
+  - id: led_top_state
+    type: uint32_t
+    restore_value: true
+    initial_value: '4294967295'
+  - id: led_groups_restoring
+    type: bool
+    restore_value: false
+    initial_value: 'false'
 
 light:
   # These lights are controlling the LEDs on the device
@@ -118,6 +144,10 @@ light:
     default_transition_length: ${default_transition_length}
     restore_mode: ${LIGHT_SIDES_RESTORE_MODE}
     internal: false
+    on_state:
+      - script.execute:
+          id: led_group_save
+          group: 0
     effects:
       - pulse:
           name: "Pulse"
@@ -159,6 +189,10 @@ light:
   - id: light_left
     name: Light - Left
     <<: *light_partition_sides
+    on_state:
+      - script.execute:
+          id: led_group_save
+          group: 1
     segments:
       - id: light_full
         from: ${13 if IS_EU_MODEL else 15}
@@ -167,6 +201,10 @@ light:
   - id: light_right
     name: Light - Right
     <<: *light_partition_sides
+    on_state:
+      - script.execute:
+          id: led_group_save
+          group: 2
     segments:
       - id: light_full
         from: ${27 if IS_EU_MODEL else 31}
@@ -179,6 +217,10 @@ light:
   - id: light_top
     name: Light - Top
     <<: *light_partition_sides
+    on_state:
+      - script.execute:
+          id: led_group_save
+          group: 3
     segments:
       - id: light_full
         from: ${20 if IS_EU_MODEL else 25}
@@ -186,6 +228,137 @@ light:
         reversed: false
 
 script:
+  - id: !extend boot_done
+    then:
+      # Load the saved palette into the four configuration entities. The relay
+      # status renderer remains authoritative for physical on/off state.
+      - script.execute: led_groups_restore
+
+  - id: led_group_save
+    mode: queued
+    max_runs: 8
+    parameters:
+      group: uint8_t
+    then:
+      - lambda: |-
+          // Ignore component startup and our own restore calls. remote_values is
+          // the requested target, unlike current_values which moves gradually
+          // during a transition.
+          if (id(led_groups_restoring) || !id(bs_boot_completed)->state)
+            return;
+
+          light::LightState *configured_light = nullptr;
+          uint32_t *packed_state = nullptr;
+          switch (group) {
+            case 0:
+              configured_light = light_bottom;
+              packed_state = &id(led_bottom_state);
+              break;
+            case 1:
+              configured_light = light_left;
+              packed_state = &id(led_left_state);
+              break;
+            case 2:
+              configured_light = light_right;
+              packed_state = &id(led_right_state);
+              break;
+            case 3:
+              configured_light = light_top;
+              packed_state = &id(led_top_state);
+              break;
+            default:
+              ESP_LOGE("${TAG_HW_LEDS}", "Invalid persistent LED group: %" PRIu8, group);
+              return;
+          }
+
+          const auto &values = configured_light->remote_values;
+          if (values.is_on()) {
+            const auto to_byte = [](float value) -> uint8_t {
+              value = std::max(0.0f, std::min(1.0f, value));
+              return static_cast<uint8_t>(value * 255.0f + 0.5f);
+            };
+            *packed_state = (static_cast<uint32_t>(to_byte(values.get_red())) << 24) |
+                            (static_cast<uint32_t>(to_byte(values.get_green())) << 16) |
+                            (static_cast<uint32_t>(to_byte(values.get_blue())) << 8) |
+                            static_cast<uint32_t>(to_byte(values.get_brightness()));
+          }
+
+          // An OFF command controls only the current output. It intentionally does
+          // not erase the last palette, so the next relay ON uses the same values.
+          ESP_LOGD("${TAG_HW_LEDS}", "Saved LED group %" PRIu8 " palette", group);
+          led_groups_flush->execute();
+
+          #ifdef TX_ULTIMATE_EASY_NIGHT_MODE
+          // Changing a group while night mode is active updates its saved setting,
+          // but night mode remains visually authoritative until it is disabled.
+          if (sw_night_mode->state)
+            night_mode_apply->execute();
+          #endif
+
+          #ifdef TX_ULTIMATE_EASY_HW_RELAYS
+          // Repaint immediately so changing the palette does not leave the whole
+          // side lit; each segment returns to the corresponding relay state.
+          #ifdef TX_ULTIMATE_EASY_NIGHT_MODE
+          if (!sw_night_mode->state)
+          #endif
+            show_relay_status->execute();
+          #endif
+
+  - id: led_groups_flush
+    mode: restart
+    then:
+      # Coalesce rapid color-picker updates, then force the saved globals to flash
+      # instead of waiting for ESPHome's default one-minute preference interval.
+      - delay: 2s
+      - lambda: global_preferences->sync();
+
+  - id: led_groups_apply_all
+    mode: restart
+    then:
+      - lambda: |-
+          light::LightState *groups[] = {
+            light_bottom, light_left, light_right, light_top
+          };
+          const uint32_t states[] = {
+            id(led_bottom_state), id(led_left_state), id(led_right_state), id(led_top_state)
+          };
+
+          for (uint8_t group = 0; group < 4; group++) {
+            const uint32_t packed = states[group];
+            auto call = groups[group]->make_call();
+            // Restore the selectable RGB/brightness values while leaving the
+            // physical group off. Relay status is repainted immediately after boot.
+            call.set_state(false);
+            call.set_rgb(((packed >> 24) & 0xFF) / 255.0f,
+                         ((packed >> 16) & 0xFF) / 255.0f,
+                         ((packed >> 8) & 0xFF) / 255.0f);
+            call.set_brightness((packed & 0xFF) / 255.0f);
+            call.set_transition_length(0);
+            call.perform();
+          }
+
+  - id: led_groups_restore
+    mode: restart
+    then:
+      - globals.set:
+          id: led_groups_restoring
+          value: 'true'
+      - script.execute: led_groups_apply_all
+      - script.wait: led_groups_apply_all
+      # Let all on_state callbacks caused by the calls above drain before saving is
+      # re-enabled. This also keeps boot-time partition changes out of NVS.
+      - delay: 50ms
+      - globals.set:
+          id: led_groups_restoring
+          value: 'false'
+      # This final repaint makes the boot order deterministic: even if the palette
+      # restore briefly turned a whole side off, every relay segment now returns to
+      # its restored switch state using the saved RGB/brightness values.
+      - lambda: |-
+          #ifdef TX_ULTIMATE_EASY_HW_RELAYS
+          show_relay_status->execute();
+          #endif
+
   - id: !extend dump_config
     then:
       - lambda: |-
@@ -196,6 +369,7 @@ script:
           ESP_LOGCONFIG("${TAG_HW_LEDS}", "LED restore modes:\n"
                                           "  Light - All: ${LIGHT_FULL_RESTORE_MODE}\n"
                                           "  Sides:       ${LIGHT_SIDES_RESTORE_MODE}");
+          ESP_LOGCONFIG("${TAG_HW_LEDS}", "Persistent relay LED palettes: Enabled");
 
   - id: !extend dump_config_list_packages
     then:
