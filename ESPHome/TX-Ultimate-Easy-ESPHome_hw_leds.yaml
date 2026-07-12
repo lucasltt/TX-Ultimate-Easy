@@ -140,7 +140,9 @@ light:
     id: light_bottom
     name: Light - Bottom
     platform: partition
-    disabled_by_default: true
+    disabled_by_default: false
+    entity_category: config
+    icon: mdi:palette
     default_transition_length: ${default_transition_length}
     restore_mode: ${LIGHT_SIDES_RESTORE_MODE}
     internal: false
