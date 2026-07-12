@@ -61,10 +61,36 @@ globals:
     type: uint32_t
     restore_value: true
     initial_value: '4294967295'
+  - id: led_all_state
+    type: uint32_t
+    restore_value: true
+    initial_value: '4294967295'
   - id: led_groups_restoring
     type: bool
     restore_value: false
     initial_value: 'false'
+
+output:
+  # No-op outputs backing the virtual all-groups RGB picker. The selected values
+  # are read from the light state and copied into the four persistent palettes.
+  - id: out_led_palette_all_red
+    platform: template
+    type: float
+    write_action:
+      - lambda: |-
+          // Virtual output - intentionally does not drive hardware.
+  - id: out_led_palette_all_green
+    platform: template
+    type: float
+    write_action:
+      - lambda: |-
+          // Virtual output - intentionally does not drive hardware.
+  - id: out_led_palette_all_blue
+    platform: template
+    type: float
+    write_action:
+      - lambda: |-
+          // Virtual output - intentionally does not drive hardware.
 
 light:
   # These lights are controlling the LEDs on the device
@@ -188,6 +214,23 @@ light:
         from: ${6 if IS_EU_MODEL else 9}
         to: ${12 if IS_EU_MODEL else 14}
         reversed: true
+
+  # Virtual RGB picker that applies one color and brightness to all four groups.
+  # It never drives the strip directly; relay status remains authoritative for
+  # which physical segments are currently on.
+  - id: light_led_palette_all
+    name: LED Palette - All
+    platform: rgb
+    red: out_led_palette_all_red
+    green: out_led_palette_all_green
+    blue: out_led_palette_all_blue
+    disabled_by_default: false
+    entity_category: config
+    icon: mdi:palette-swatch
+    restore_mode: ALWAYS_ON
+    on_state:
+      - script.execute: led_palette_all_save
+
   - id: light_left
     name: Light - Left
     <<: *light_partition_sides
@@ -235,6 +278,48 @@ script:
       # Load the saved palette into the four configuration entities. The relay
       # status renderer remains authoritative for physical on/off state.
       - script.execute: led_groups_restore
+
+  - id: led_palette_all_save
+    mode: restart
+    then:
+      - lambda: |-
+          if (id(led_groups_restoring) || !id(bs_boot_completed)->state)
+            return;
+
+          const auto &values = light_led_palette_all->remote_values;
+          // OFF is only a UI state for this virtual entity and must not erase the
+          // last palette. A new palette is applied whenever it is ON and changed.
+          if (!values.is_on())
+            return;
+
+          const auto to_byte = [](float value) -> uint8_t {
+            value = std::max(0.0f, std::min(1.0f, value));
+            return static_cast<uint8_t>(value * 255.0f + 0.5f);
+          };
+          const uint32_t packed =
+              (static_cast<uint32_t>(to_byte(values.get_red())) << 24) |
+              (static_cast<uint32_t>(to_byte(values.get_green())) << 16) |
+              (static_cast<uint32_t>(to_byte(values.get_blue())) << 8) |
+              static_cast<uint32_t>(to_byte(values.get_brightness()));
+
+          id(led_all_state) = packed;
+          id(led_bottom_state) = packed;
+          id(led_left_state) = packed;
+          id(led_right_state) = packed;
+          id(led_top_state) = packed;
+          led_groups_flush->execute();
+          ESP_LOGD("${TAG_HW_LEDS}", "Saved one palette for all LED groups");
+
+          #ifdef TX_ULTIMATE_EASY_NIGHT_MODE
+          if (sw_night_mode->state) {
+            // Keep Night Mode visually authoritative. The new group palette will
+            // be rendered by show_relay_status when Night Mode is disabled.
+            night_mode_apply->execute();
+            return;
+          }
+          #endif
+
+          led_groups_restore->execute();
 
   - id: led_group_save
     mode: queued
@@ -339,6 +424,18 @@ script:
             call.perform();
           }
 
+          // Restore the virtual all-groups picker independently from the four
+          // physical configuration partitions.
+          const uint32_t all_packed = id(led_all_state);
+          auto all_call = light_led_palette_all->make_call();
+          all_call.set_state(true);
+          all_call.set_rgb(((all_packed >> 24) & 0xFF) / 255.0f,
+                           ((all_packed >> 16) & 0xFF) / 255.0f,
+                           ((all_packed >> 8) & 0xFF) / 255.0f);
+          all_call.set_brightness((all_packed & 0xFF) / 255.0f);
+          all_call.set_transition_length(0);
+          all_call.perform();
+
   - id: led_groups_restore
     mode: restart
     then:
@@ -372,6 +469,7 @@ script:
                                           "  Light - All: ${LIGHT_FULL_RESTORE_MODE}\n"
                                           "  Sides:       ${LIGHT_SIDES_RESTORE_MODE}");
           ESP_LOGCONFIG("${TAG_HW_LEDS}", "Persistent relay LED palettes: Enabled");
+          ESP_LOGCONFIG("${TAG_HW_LEDS}", "Virtual all-groups palette: Enabled");
 
   - id: !extend dump_config_list_packages
     then:
