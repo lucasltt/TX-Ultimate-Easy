@@ -190,13 +190,10 @@ script:
           id(espnow_button_enabled)[3] = parse_mac_bytes(id(espnow_mac_addresses)[3], id(espnow_mac_bytes)[3].data());
           #endif  // TX_ULTIMATE_EASY_ESPNOW_BUTTON_4_MAC_DEFINED && gang_count
 
-  - id: !extend button_click_event
+  - id: !extend button_standard_action
     then:
       - lambda: |-
           if (!sw_espnow_send_enabled->state) {
-            return;
-          }
-          if (click_count != 1) {
             return;
           }
           espnow_send->execute(button);

@@ -314,6 +314,14 @@ script:
           id: bs_multi_touch
           state: ON  # yamllint disable-line rule:truthy
 
+  - id: touch_on_long_touch_release
+    mode: restart
+    parameters:
+      position: uint8_t
+    then:
+    # Extended by:
+    #   - HW Buttons
+
   - id: touch_on_press
     mode: restart
     parameters:
@@ -368,6 +376,7 @@ tx_ultimate_easy:
           ESP_LOGE("${TAG_HW_TOUCH}", "Invalid long-touch position: %" PRIu8, touch_position);
         } else {
           ESP_LOGI("${TAG_HW_TOUCH}", "Long-touch released at position %" PRIu8, touch_position);
+          touch_on_long_touch_release->execute(touch_position);
         }
 
   on_multi_touch_release:

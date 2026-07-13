@@ -152,6 +152,10 @@ For more details, please refer to our **[Events docs](docs/events.md)**.
   Example: Trigger scenes or complex automations through Home Assistant
 - **Relay Toggle**: Direct control of the associated relay
   Example: Toggle relay state with each press, independent of Home Assistant
+- **Touch - Unified button action**: A persistent virtual switch, off by default. When enabled,
+  double/multiple clicks, long presses, and multi-touch reuse the standard configured button action.
+  Swipe gestures remain separate events and never run the standard button action. Multi-touch uses
+  the last valid button pressed because its UART release packet does not identify a reliable button.
 
 #### Automation
 All device behaviors can be customized through Home Assistant automations without relying on local device triggers.
