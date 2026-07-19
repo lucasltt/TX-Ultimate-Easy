@@ -186,6 +186,9 @@ suppresses vibration and click-sound feedback. The state survives reboots.
 - **Home Assistant UI Configuration**: Manage all device settings directly through the Home Assistant interface
 - **Zero YAML Knowledge Required**: After initial setup, no manual YAML editing needed
 - **Flexible Light Control**: Customize LED behavior and effects
+- **Persistent US Ambient Lights**: Top and Bottom retain their independent on/off,
+  color, and brightness across reboots and temporary whole-strip or Night Mode overrides;
+  Left and Right remain controlled by relay state
 - **Touch Panel Support**: Full support for touch gestures and multi-touch capabilities
 - **Advanced Automations**: Create complex automations using Home Assistant's powerful automation engine
 - **Bluetooth Proxy Support**: Compatible with ESPHome's bluetooth_proxy component for BLE device integration

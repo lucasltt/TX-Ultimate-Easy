@@ -65,6 +65,14 @@ globals:
     type: uint32_t
     restore_value: true
     initial_value: '4294967295'
+  # US panels use Left/Right for relay indicators, leaving Bottom/Top available
+  # as independent ambient lights. Persist only those two physical ON/OFF states:
+  # bit 0 = Bottom, bit 1 = Top. EU panels ignore this value because Bottom/Top
+  # are relay indicators there.
+  - id: led_top_bottom_power
+    type: uint8_t
+    restore_value: true
+    initial_value: '0'
   - id: led_groups_restoring
     type: bool
     restore_value: false
@@ -117,6 +125,16 @@ light:
     default_transition_length: ${default_transition_length}
     internal: false
     restore_mode: ${LIGHT_SIDES_RESTORE_MODE}
+    on_turn_off:
+      # An overlapping whole-strip partition clears every physical pixel. Restore
+      # the independent US Top/Bottom states after that temporary override ends.
+      - if:
+          condition:
+            and:
+              - lambda: return ${1 if IS_US_MODEL else 0};
+              - binary_sensor.is_on: bs_boot_completed
+          then:
+            - script.execute: led_groups_restore
     effects:
       - addressable_rainbow:
           name: "Rainbow"
@@ -359,6 +377,22 @@ script:
           }
 
           const auto &values = configured_light->remote_values;
+          #if TX_ULTIMATE_EASY_IS_US_MODEL
+          // Only Top and Bottom have an independent physical ON/OFF state on US
+          // panels. Left and Right remain authoritative relay indicators.
+          if (group == 0) {
+            if (values.is_on())
+              id(led_top_bottom_power) |= 0x01;
+            else
+              id(led_top_bottom_power) &= static_cast<uint8_t>(~0x01);
+          } else if (group == 3) {
+            if (values.is_on())
+              id(led_top_bottom_power) |= 0x02;
+            else
+              id(led_top_bottom_power) &= static_cast<uint8_t>(~0x02);
+          }
+          #endif
+
           if (values.is_on()) {
             const auto to_byte = [](float value) -> uint8_t {
               value = std::max(0.0f, std::min(1.0f, value));
@@ -413,9 +447,17 @@ script:
           for (uint8_t group = 0; group < 4; group++) {
             const uint32_t packed = states[group];
             auto call = groups[group]->make_call();
-            // Restore the selectable RGB/brightness values while leaving the
-            // physical group off. Relay status is repainted immediately after boot.
-            call.set_state(false);
+            // US Top/Bottom are independent ambient lights, so their saved ON/OFF
+            // state is restored. Left/Right stay off here and are repainted from
+            // relay state below. EU Top/Bottom also remain relay-authoritative.
+            bool restore_power = false;
+            #if TX_ULTIMATE_EASY_IS_US_MODEL
+            if (group == 0)
+              restore_power = (id(led_top_bottom_power) & 0x01) != 0;
+            else if (group == 3)
+              restore_power = (id(led_top_bottom_power) & 0x02) != 0;
+            #endif
+            call.set_state(restore_power);
             call.set_rgb(((packed >> 24) & 0xFF) / 255.0f,
                          ((packed >> 16) & 0xFF) / 255.0f,
                          ((packed >> 8) & 0xFF) / 255.0f);
@@ -470,6 +512,11 @@ script:
                                           "  Sides:       ${LIGHT_SIDES_RESTORE_MODE}");
           ESP_LOGCONFIG("${TAG_HW_LEDS}", "Persistent relay LED palettes: Enabled");
           ESP_LOGCONFIG("${TAG_HW_LEDS}", "Virtual all-groups palette: Enabled");
+          if (${1 if IS_US_MODEL else 0}) {
+            ESP_LOGCONFIG("${TAG_HW_LEDS}", "Persistent ambient power: Bottom=%s, Top=%s",
+                          ONOFF((id(led_top_bottom_power) & 0x01) != 0),
+                          ONOFF((id(led_top_bottom_power) & 0x02) != 0));
+          }
 
   - id: !extend dump_config_list_packages
     then:

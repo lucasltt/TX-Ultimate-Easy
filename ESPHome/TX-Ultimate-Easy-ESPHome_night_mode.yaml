@@ -180,8 +180,13 @@ switch:
             // No need to clear the snapshot values - they will be overwritten next time night mode is enabled.
             night_mode_apply->stop();  // stop in case we're in the middle of a transition
             light_night_mode_leds->turn_off().perform();
-            // Repaint relay indicators using their saved color/brightness palettes.
+            // Restore independent US Top/Bottom power states and then repaint the
+            // relay indicators using their saved color/brightness palettes.
+            #if TX_ULTIMATE_EASY_IS_US_MODEL
+            led_groups_restore->execute();
+            #else
             show_relay_status->execute();
+            #endif
 
   # ── Settings (entity_category: config → grouped under "Configuration") ────
   - id: sw_night_mode_suppress_vibration
